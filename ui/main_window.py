@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                            QTreeWidget, QTreeWidgetItem, QTextEdit, QPushButton,
                            QInputDialog, QMessageBox, QFileDialog, QLineEdit)
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 import sys
 import os
 
@@ -32,11 +32,23 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout()
         left_panel.setLayout(left_layout)
         
-        # 添加搜索框
+        # 添加搜索面板
+        search_panel = QWidget()
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_panel.setLayout(search_layout)
+        
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("搜索笔记 (F3查找下一个)")
+        self.search_box.setPlaceholderText("搜索笔记")
         self.search_box.textChanged.connect(self.on_search_text_changed)
-        left_layout.addWidget(self.search_box)
+        search_layout.addWidget(self.search_box)
+        
+        btn_search = QPushButton("查找下一个")
+        btn_search.setToolTip("F3")
+        btn_search.clicked.connect(self.find_next)
+        search_layout.addWidget(btn_search)
+        
+        left_layout.addWidget(search_panel)
         
         # 添加树形控件
         self.tree = QTreeWidget()
@@ -45,7 +57,6 @@ class MainWindow(QMainWindow):
         self.tree.setAcceptDrops(True)
         self.tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
         self.tree.itemClicked.connect(self.on_item_clicked)
-        self.tree.dropEvent = self.handle_drop
         left_layout.addWidget(self.tree)
         
         # 添加按钮
@@ -111,9 +122,9 @@ class MainWindow(QMainWindow):
                 start_item = self.tree.topLevelItem(0)
         
         item = start_item
-        first_search = True
-        while item and (first_search or item != start_item):
-            first_search = False
+        searched_items = set()
+        while item and item not in searched_items:
+            searched_items.add(item)
             if self.search_text in item.text(0).lower():
                 self.tree.setCurrentItem(item)
                 item.setExpanded(True)
@@ -121,11 +132,12 @@ class MainWindow(QMainWindow):
                     item.parent().setExpanded(True)
                 self.current_search_item = item
                 return
-            item = self.get_next_item(item)
-        
-        if self.current_search_item:
-            self.current_search_item = None
-            self.find_next()
+            
+            next_item = self.get_next_item(item)
+            if not next_item or next_item in searched_items:
+                item = self.tree.topLevelItem(0)
+            else:
+                item = next_item
     
     def get_next_item(self, item):
         if item.childCount() > 0:
@@ -187,7 +199,6 @@ class MainWindow(QMainWindow):
         note_id = current_item.data(0, Qt.ItemDataRole.UserRole)
         note = self.note_manager.notes[note_id]
         
-        # 如果有子笔记，需要确认
         if note.children:
             reply = QMessageBox.question(
                 self,
@@ -224,7 +235,7 @@ class MainWindow(QMainWindow):
             return
             
         note_id = current_item.data(0, Qt.ItemDataRole.UserRole)
-        content = self.editor.toPlainText()
+        content = self.editor.toHtml()
         self.note_manager.update_note(note_id, content=content)
     
     def insert_image(self):
@@ -235,40 +246,25 @@ class MainWindow(QMainWindow):
             "图片文件 (*.png *.jpg *.jpeg *.gif *.bmp)"
         )
         if file_name:
-            self.editor.insertHtml(f'<img src="{file_name}" />')
-    
-    def handle_drop(self, event):
-        if not event.isAccepted() and event.source() == self.tree:
-            drop_item = self.tree.itemAt(event.pos())
-            drag_item = self.tree.currentItem()
-            
-            if drop_item and drag_item and drag_item != drop_item:
-                drag_id = drag_item.data(0, Qt.ItemDataRole.UserRole)
-                drop_id = drop_item.data(0, Qt.ItemDataRole.UserRole)
-                
-                if self.note_manager.move_note(drag_id, drop_id):
-                    event.accept()
-                    self.refresh_tree()
-                    return
-                
-        event.ignore()
+            current_item = self.tree.currentItem()
+            if current_item:
+                note_id = current_item.data(0, Qt.ItemDataRole.UserRole)
+                saved_path = self.note_manager.save_image(note_id, file_name)
+                if saved_path:
+                    self.editor.insertHtml(f'<img src="{saved_path}" />')
+                    self.on_content_changed()
     
     def refresh_tree(self):
-        # 保存当前展开状态
         expanded_items = {}
         root_item = self.tree.topLevelItem(0)
         if root_item:
             self._save_expanded_state(root_item, expanded_items)
         
-        # 清空并重建树
         self.tree.clear()
         root_item = self._create_tree_item(self.note_manager.root)
         self.tree.addTopLevelItem(root_item)
-        
-        # 默认展开根节点
         root_item.setExpanded(True)
         
-        # 恢复之前的展开状态
         self._restore_expanded_state(root_item, expanded_items)
     
     def _create_tree_item(self, note):
@@ -286,7 +282,6 @@ class MainWindow(QMainWindow):
         expanded_items[note_id] = item.isExpanded()
         for i in range(item.childCount()):
             self._save_expanded_state(item.child(i), expanded_items)
-    
     def _restore_expanded_state(self, item, expanded_items):
         note_id = item.data(0, Qt.ItemDataRole.UserRole)
         if note_id in expanded_items:
