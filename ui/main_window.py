@@ -17,7 +17,11 @@ class MainWindow(QMainWindow):
         self.current_search_item = None
         self.init_ui()
         self.setup_shortcuts()
-    
+    def on_item_clicked(self, item):
+        """处理树形控件项点击事件"""
+        note_id = item.data(0, Qt.ItemDataRole.UserRole)
+        note = self.note_manager.notes[note_id]
+        self.editor.setText(note.content)
     def init_ui(self):
         self.setWindowTitle('Tree Note')
         self.setGeometry(100, 100, 800, 600)
@@ -87,11 +91,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(right_panel)
         
         self.refresh_tree()
-    
     def setup_shortcuts(self):
         self.tree.itemDoubleClicked.connect(self.rename_note)
         self.tree.keyPressEvent = self.handle_tree_key_press
-    
     def handle_tree_key_press(self, event):
         if event.key() == Qt.Key.Key_F2:
             current_item = self.tree.currentItem()
@@ -101,30 +103,34 @@ class MainWindow(QMainWindow):
             self.find_next()
         else:
             QTreeWidget.keyPressEvent(self.tree, event)
-    
     def on_search_text_changed(self, text):
         self.search_text = text.lower()
         self.current_search_item = None
         if text:
             self.find_next()
-    
     def find_next(self):
         if not self.search_text:
-            return
-            
-        start_item = self.current_search_item or self.tree.topLevelItem(0)
-        if not start_item:
-            return
-            
-        if self.current_search_item:
-            start_item = self.get_next_item(start_item)
-            if not start_item:
-                start_item = self.tree.topLevelItem(0)
+            self.search_text = self.search_box.text().lower()
+            if not self.search_text:
+                return  # 修复：移除多余的缩进
         
-        item = start_item
-        searched_items = set()
-        while item and item not in searched_items:
-            searched_items.add(item)
+        # 获取所有节点
+        all_items = []
+        self._collect_tree_items(self.tree.topLevelItem(0), all_items)
+        
+        if not all_items:
+            return  # 修复：移除多余的缩进
+        
+        # 确定开始位置
+        start_index = 0
+        if self.current_search_item in all_items:
+            start_index = all_items.index(self.current_search_item) + 1
+        
+        # 搜索下一个匹配项
+        for i in range(len(all_items)):
+            index = (start_index + i) % len(all_items)
+            item = all_items[index]
+            
             if self.search_text in item.text(0).lower():
                 self.tree.setCurrentItem(item)
                 item.setExpanded(True)
@@ -132,13 +138,15 @@ class MainWindow(QMainWindow):
                     item.parent().setExpanded(True)
                 self.current_search_item = item
                 return
-            
-            next_item = self.get_next_item(item)
-            if not next_item or next_item in searched_items:
-                item = self.tree.topLevelItem(0)
-            else:
-                item = next_item
-    
+        # 未找到匹配项
+        self.current_search_item = None
+        return  # 修复：移除多余的缩进
+    def _collect_tree_items(self, item, items):
+        if not item:
+            return
+        items.append(item)
+        for i in range(item.childCount()):
+            self._collect_tree_items(item.child(i), items)
     def get_next_item(self, item):
         if item.childCount() > 0:
             return item.child(0)
@@ -155,7 +163,6 @@ class MainWindow(QMainWindow):
             parent = parent.parent()
             
         return self.tree.topLevelItem(0)
-    
     def get_next_sibling(self, item):
         parent = item.parent()
         if not parent:
@@ -168,17 +175,12 @@ class MainWindow(QMainWindow):
         if index < parent.childCount() - 1:
             return parent.child(index + 1)
         return None
-    
-    def on_item_clicked(self, item):
-        note_id = item.data(0, Qt.ItemDataRole.UserRole)
-        note = self.note_manager.notes[note_id]
-        self.editor.setText(note.content)
-    
     def create_new_note(self):
+        """创建新笔记"""
         current_item = self.tree.currentItem()
         if not current_item:
             current_item = self.tree.topLevelItem(0)
-        
+            
         parent_id = current_item.data(0, Qt.ItemDataRole.UserRole)
         title = "新建笔记"
         note_id = self.note_manager.create_note(title, parent_id)
@@ -190,7 +192,6 @@ class MainWindow(QMainWindow):
         
         self.tree.setCurrentItem(new_item)
         self.rename_note(new_item)
-    
     def delete_current_note(self):
         current_item = self.tree.currentItem()
         if not current_item:
@@ -209,13 +210,12 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.No:
                 return
-        
+            
         if self.note_manager.delete_note(note_id):
             parent = current_item.parent()
-            parent.removeChild(current_item)
             if parent:
+                parent.removeChild(current_item)
                 self.tree.setCurrentItem(parent)
-    
     def rename_note(self, item):
         note_id = item.data(0, Qt.ItemDataRole.UserRole)
         if note_id == self.note_manager.root.id:
@@ -228,7 +228,6 @@ class MainWindow(QMainWindow):
             note.title = title
             item.setText(0, title)
             self.note_manager.update_note(note_id, title=title)
-    
     def on_content_changed(self):
         current_item = self.tree.currentItem()
         if not current_item:
@@ -237,7 +236,6 @@ class MainWindow(QMainWindow):
         note_id = current_item.data(0, Qt.ItemDataRole.UserRole)
         content = self.editor.toHtml()
         self.note_manager.update_note(note_id, content=content)
-    
     def insert_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self,
@@ -253,7 +251,6 @@ class MainWindow(QMainWindow):
                 if saved_path:
                     self.editor.insertHtml(f'<img src="{saved_path}" />')
                     self.on_content_changed()
-    
     def refresh_tree(self):
         expanded_items = {}
         root_item = self.tree.topLevelItem(0)
@@ -266,7 +263,6 @@ class MainWindow(QMainWindow):
         root_item.setExpanded(True)
         
         self._restore_expanded_state(root_item, expanded_items)
-    
     def _create_tree_item(self, note):
         item = QTreeWidgetItem([note.title])
         item.setData(0, Qt.ItemDataRole.UserRole, note.id)
@@ -276,7 +272,6 @@ class MainWindow(QMainWindow):
             item.addChild(child_item)
         
         return item
-    
     def _save_expanded_state(self, item, expanded_items):
         note_id = item.data(0, Qt.ItemDataRole.UserRole)
         expanded_items[note_id] = item.isExpanded()
