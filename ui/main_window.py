@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QTreeWidget, QTreeWidgetItem, QTextEdit, QPushButton,
                            QInputDialog, QMessageBox, QFileDialog, QLineEdit)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QTextCharFormat, QTextCursor
 import sys
 import os
 
@@ -106,20 +107,22 @@ class MainWindow(QMainWindow):
     def on_search_text_changed(self, text):
         self.search_text = text.lower()
         self.current_search_item = None
-        if text:
-            self.find_next()
+        # 清除之前的高亮
+        self.clear_highlight()
     def find_next(self):
         if not self.search_text:
             self.search_text = self.search_box.text().lower()
             if not self.search_text:
-                return  # 修复：移除多余的缩进
+                QMessageBox.information(self, "搜索", "请输入搜索内容")
+                return
         
         # 获取所有节点
         all_items = []
         self._collect_tree_items(self.tree.topLevelItem(0), all_items)
         
         if not all_items:
-            return  # 修复：移除多余的缩进
+            QMessageBox.information(self, "搜索", "没有可搜索的项目")
+            return
         
         # 确定开始位置
         start_index = 0
@@ -127,20 +130,59 @@ class MainWindow(QMainWindow):
             start_index = all_items.index(self.current_search_item) + 1
         
         # 搜索下一个匹配项
+        found = False
         for i in range(len(all_items)):
             index = (start_index + i) % len(all_items)
+            if index == 0 and i > 0:
+                QMessageBox.information(self, "搜索", "已到尾部，将从头开始搜索")
             item = all_items[index]
+            note_id = item.data(0, Qt.ItemDataRole.UserRole)
+            note = self.note_manager.notes[note_id]
             
-            if self.search_text in item.text(0).lower():
+            # 检查标题和内容
+            if self.search_text in item.text(0).lower() or self.search_text in note.content.lower():
                 self.tree.setCurrentItem(item)
                 item.setExpanded(True)
                 if item.parent():
                     item.parent().setExpanded(True)
                 self.current_search_item = item
-                return
-        # 未找到匹配项
-        self.current_search_item = None
-        return  # 修复：移除多余的缩进
+                
+                # 自动显示匹配的笔记内容
+                self.editor.setText(note.content)
+                
+                # 高亮显示搜索内容
+                self.highlight_search_text(note.content)
+                found = True
+                break
+        
+        # 未找到新的匹配项
+        if not found:
+            QMessageBox.information(self, "搜索", "搜索已完成，没有新的匹配项")
+            self.current_search_item = None
+    def clear_highlight(self):
+        cursor = self.editor.textCursor()
+        cursor.setPosition(0)
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setCharFormat(QTextCharFormat())
+    def highlight_search_text(self, content):
+        cursor = self.editor.textCursor()
+        format = QTextCharFormat()
+        format.setBackground(Qt.GlobalColor.yellow)
+        
+        # 清除之前的高亮
+        self.clear_highlight()
+        
+        # 搜索并高亮
+        pos = 0
+        while pos >= 0:
+            pos = content.lower().find(self.search_text, pos)
+            if pos >= 0:
+                # 确保光标位置在文本范围内
+                if pos + len(self.search_text) <= len(content):
+                    cursor.setPosition(pos)
+                    cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(self.search_text))
+                    cursor.setCharFormat(format)
+                pos += len(self.search_text)
     def _collect_tree_items(self, item, items):
         if not item:
             return

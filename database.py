@@ -1,13 +1,18 @@
 import sqlite3
 from typing import Optional, List, Tuple
 from uuid import uuid4
+from pathlib import Path
 
 class Database:
     def __init__(self):
-        self.db_path = "d:\\program\\tree\\notes.db"
+        # 将数据库路径设置为与运行程序同一级目录
+        self.db_path = Path.cwd() / "notes.db"
         self._init_db()
     
     def _init_db(self):
+        # 确保数据库文件路径存在
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS notes (
@@ -19,7 +24,6 @@ class Database:
                     FOREIGN KEY (parent_id) REFERENCES notes(id)
                 )
             """)
-            
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS note_images (
                     id TEXT PRIMARY KEY,
